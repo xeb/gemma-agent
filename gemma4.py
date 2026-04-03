@@ -76,7 +76,14 @@ def load_transformers(model_id):
 
 def load_mlx(model_id):
     from mlx_lm import load, stream_generate
-    model, tokenizer = load(model_id)
+    try:
+        model, tokenizer = load(model_id)
+    except ValueError as e:
+        if "not found" in str(e).lower() or "module" in str(e).lower():
+            sys.exit(f"[error] mlx_lm does not support this model architecture yet.\n"
+                     f"Upgrade mlx-lm (pip install -U mlx-lm) or use a transformers backend model instead.\n"
+                     f"Original error: {e}")
+        raise
     print(f"[mlx | model: {model_id}]")
 
     def generate(messages):
