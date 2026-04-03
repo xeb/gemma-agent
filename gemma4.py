@@ -4,8 +4,8 @@
 #     "accelerate>=1.13.0",
 #     "pillow>=12.2.0",
 #     "six>=1.17.0",
-#     "torch>=2.11.0",
-#     "torchvision>=0.26.0",
+#     "torch>=2.8.0,<2.9.0",
+#     "torchvision>=0.23.0,<0.24.0",
 #     "transformers>=5.5.0",
 # ]
 # ///
