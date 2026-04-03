@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 
+import torch
 from transformers import AutoProcessor, AutoModelForCausalLM, TextIteratorStreamer
 
 #MODEL_ID = "google/gemma-4-26B-A4B-it"
@@ -21,11 +22,15 @@ MODEL_ID = "google/gemma-4-E4B-it"
 
 # Load model
 processor = AutoProcessor.from_pretrained(MODEL_ID)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
-    dtype="auto",
-    device_map="auto"
-)
+    dtype=torch.bfloat16,
+    attn_implementation="sdpa",
+).to(DEVICE)
+
+print(f"[device: {next(model.parameters()).device} | dtype: {next(model.parameters()).dtype}]")
+
 messages = [
     {"role": "system", "content": "You are a helpful assistant."},
 ]

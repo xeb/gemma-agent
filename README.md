@@ -1,6 +1,14 @@
-# gemma4 chat
+# gemma-agent
 
-Multi-turn interactive chat with Google's Gemma 4 model, running locally via Hugging Face Transformers.
+Standalone offline agent powered by Gemma 4, running locally via Hugging Face Transformers. Capable of reading files, writing files, and executing bash.
+
+## Design goals
+
+- **Single script** — everything in `gemma4.py`, runnable with `uv run gemma4.py`
+- **Simplicity** — minimal abstractions, minimal dependencies
+- **Offline** — no network required after model download
+- **Minimal code** — favor fewer lines over readability
+- **Small standalone deployment** (secondary/future)
 
 ## Requirements
 
@@ -21,13 +29,8 @@ This starts an interactive session with a `gemma>` prompt. Type your messages an
 After each response, a stats line is printed:
 
 ```
-[stats] turn: 5.31s | output tokens: 11 | 2.1 tok/s | history: 0.2 KB (~46 tokens)
+[5.3s | 12 tok | 2.2 tok/s | ctx: 0.2KB ~46tok]
 ```
-
-- **turn** -- wall-clock time for generation
-- **output tokens** -- tokens generated this turn
-- **tok/s** -- generation throughput
-- **history** -- total conversation size in KB and estimated token count
 
 ### Model selection
 
