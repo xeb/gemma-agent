@@ -14,9 +14,10 @@ echo ""
 # --- Test: --list-models ---
 echo ">> --list-models"
 LIST_OUTPUT=$(uv run "$SCRIPT" --list-models 2>&1)
+echo "$LIST_OUTPUT" | grep -q "e2b" && pass "--list-models shows e2b" || fail "--list-models missing e2b"
 echo "$LIST_OUTPUT" | grep -q "e4b" && pass "--list-models shows e4b" || fail "--list-models missing e4b"
-echo "$LIST_OUTPUT" | grep -q "mlx-8bit" && pass "--list-models shows mlx-8bit" || fail "--list-models missing mlx-8bit"
-echo "$LIST_OUTPUT" | grep -q "mlx-4bit" && pass "--list-models shows mlx-4bit" || fail "--list-models missing mlx-4bit"
+echo "$LIST_OUTPUT" | grep -q "e2b-mlx-4bit" && pass "--list-models shows e2b-mlx-4bit" || fail "--list-models missing e2b-mlx-4bit"
+echo "$LIST_OUTPUT" | grep -q "e4b-mlx-8bit" && pass "--list-models shows e4b-mlx-8bit" || fail "--list-models missing e4b-mlx-8bit"
 echo ""
 
 # --- Test: multi-turn chat (transformers backend) ---

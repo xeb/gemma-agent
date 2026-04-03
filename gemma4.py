@@ -13,11 +13,13 @@
 import argparse, json, sys, threading, time
 
 MODELS = {
-    "e4b":       ("google/gemma-4-E4B-it", "transformers"),
-    "26b":       ("google/gemma-4-26B-A4B-it", "transformers"),
-    "mlx-8bit":  ("unsloth/gemma-4-E4B-it-MLX-8bit", "mlx"),
-    "mlx-4bit":  ("unsloth/gemma-4-E4B-it-UD-MLX-4bit", "mlx"),
-    "mlx-community-8bit": ("mlx-community/gemma-4-e4b-it-8bit", "mlx"),
+    "e2b":            ("google/gemma-4-E2B-it", "transformers"),
+    "e4b":            ("google/gemma-4-E4B-it", "transformers"),
+    "26b":            ("google/gemma-4-26B-A4B-it", "transformers"),
+    "e2b-mlx-4bit":   ("unsloth/gemma-4-E2B-it-UD-MLX-4bit", "mlx"),
+    "e4b-mlx-4bit":   ("unsloth/gemma-4-E4B-it-UD-MLX-4bit", "mlx"),
+    "e4b-mlx-8bit":   ("unsloth/gemma-4-E4B-it-MLX-8bit", "mlx"),
+    "e4b-mlx-community": ("mlx-community/gemma-4-e4b-it-8bit", "mlx"),
 }
 
 parser = argparse.ArgumentParser()
