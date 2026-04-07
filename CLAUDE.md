@@ -12,8 +12,6 @@ Self-contained native binary using Gemma 4 as an offline agent with built-in too
 ## Building
 
 ```bash
-cd gemma-native
-
 # Default: E4B Q4_K_M (~5.4 GB self-contained binary)
 ./build.sh
 
@@ -28,11 +26,14 @@ cd gemma-native
 
 ```bash
 # Self-contained (weights embedded)
-./gemma-native-packed
+./gemma-agent-packed
 
 # External GGUF
-./target/release/gemma-native /path/to/model.gguf
+./target/release/gemma-agent /path/to/model.gguf
+
+# Single prompt (useful for testing)
+./target/release/gemma-agent /path/to/model.gguf --prompt="what time is it?"
 
 # List models
-./target/release/gemma-native --list-models
+./target/release/gemma-agent --list-models
 ```

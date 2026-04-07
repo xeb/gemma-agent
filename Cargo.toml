@@ -1,5 +1,5 @@
 [package]
-name = "gemma-native"
+name = "gemma-agent"
 version = "0.1.0"
 edition = "2021"
 description = "Self-contained Gemma 4 agent with embedded GGUF weights"

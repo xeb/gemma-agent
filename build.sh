@@ -79,7 +79,7 @@ for arg in "$@"; do
 done
 
 GGUF_DIR="./gguf-cache"
-BINARY_NAME="gemma-native"
+BINARY_NAME="gemma-agent"
 OUTPUT="./${BINARY_NAME}-packed"
 
 # ─── Helpers ───
