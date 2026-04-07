@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Ensure cargo/uv are in PATH (non-interactive shells may miss them)
+# Ensure cargo/uv/homebrew are in PATH (non-interactive shells may miss them)
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+export PATH="/opt/homebrew/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 PASS=0
 FAIL=0

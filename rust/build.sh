@@ -11,6 +11,10 @@
 #
 set -euo pipefail
 
+# Ensure tools are in PATH (non-interactive shells may miss them)
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+export PATH="/opt/homebrew/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 # ─── Model Registry (no associative arrays — compatible with bash 3.x / macOS) ───
 
 model_lookup() {
