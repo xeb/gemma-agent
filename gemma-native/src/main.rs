@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -12,14 +13,34 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
+use serde::{Deserialize, Serialize};
 
 // --- Constants ---
 
 const MAGIC: &[u8; 8] = b"GMNAPAK\0";
-const FOOTER_SIZE: u64 = 24; // 8 (offset) + 8 (length) + 8 (magic)
+const FOOTER_SIZE: u64 = 24;
 const N_CTX: u32 = 4096;
 const MAX_TOKENS: i32 = 2048;
-const SYSTEM_PROMPT: &str = "You are a helpful assistant.";
+const MAX_TOOL_ROUNDS: usize = 10;
+
+const SYSTEM_PROMPT: &str = r#"You are a helpful assistant with access to tools. You can use tools by including tool calls in your response.
+
+Available tools:
+
+1. **bash** - Execute a shell command
+   Call: <tool_call>{"name": "bash", "arguments": {"command": "your command here"}}</tool_call>
+
+2. **read_file** - Read the contents of a file
+   Call: <tool_call>{"name": "read_file", "arguments": {"path": "/path/to/file"}}</tool_call>
+
+3. **write_file** - Write content to a file
+   Call: <tool_call>{"name": "write_file", "arguments": {"path": "/path/to/file", "content": "file content"}}</tool_call>
+
+Rules:
+- You may include multiple tool calls in one response.
+- After tool results are returned, continue your response to the user.
+- If no tools are needed, just respond normally.
+- Always explain what you're doing before using tools."#;
 
 // --- Model Registry ---
 
@@ -31,18 +52,16 @@ struct ModelEntry {
 }
 
 const MODELS: &[ModelEntry] = &[
-    // E4B variants (default)
-    ModelEntry { alias: "e4b",          repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q4_K_M.gguf",  size: "~5.4 GB" },
-    ModelEntry { alias: "e4b-q8",       repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q8_0.gguf",    size: "~8.0 GB" },
-    ModelEntry { alias: "e4b-q4ks",     repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q4_K_S.gguf",  size: "~5.2 GB" },
-    ModelEntry { alias: "e4b-q3km",     repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q3_K_M.gguf",  size: "~4.9 GB" },
-    ModelEntry { alias: "e4b-iq4xs",    repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-IQ4_XS.gguf",  size: "~5.1 GB" },
-    // E2B variants (smaller)
-    ModelEntry { alias: "e2b",          repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q4_K_M.gguf",  size: "~2.0 GB" },
-    ModelEntry { alias: "e2b-q8",       repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q8_0.gguf",    size: "~3.0 GB" },
-    ModelEntry { alias: "e2b-q4ks",     repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q4_K_S.gguf",  size: "~1.9 GB" },
-    ModelEntry { alias: "e2b-q3km",     repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q3_K_M.gguf",  size: "~1.8 GB" },
-    ModelEntry { alias: "e2b-iq4xs",    repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-IQ4_XS.gguf",  size: "~1.8 GB" },
+    ModelEntry { alias: "e4b",       repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q4_K_M.gguf",  size: "~5.4 GB" },
+    ModelEntry { alias: "e4b-q8",    repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q8_0.gguf",    size: "~8.0 GB" },
+    ModelEntry { alias: "e4b-q4ks",  repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q4_K_S.gguf",  size: "~5.2 GB" },
+    ModelEntry { alias: "e4b-q3km",  repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-Q3_K_M.gguf",  size: "~4.9 GB" },
+    ModelEntry { alias: "e4b-iq4xs", repo: "bartowski/google_gemma-4-E4B-it-GGUF", file: "google_gemma-4-E4B-it-IQ4_XS.gguf",  size: "~5.1 GB" },
+    ModelEntry { alias: "e2b",       repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q4_K_M.gguf",  size: "~2.0 GB" },
+    ModelEntry { alias: "e2b-q8",    repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q8_0.gguf",    size: "~3.0 GB" },
+    ModelEntry { alias: "e2b-q4ks",  repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q4_K_S.gguf",  size: "~1.9 GB" },
+    ModelEntry { alias: "e2b-q3km",  repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-Q3_K_M.gguf",  size: "~1.8 GB" },
+    ModelEntry { alias: "e2b-iq4xs", repo: "bartowski/google_gemma-4-E2B-it-GGUF", file: "google_gemma-4-E2B-it-IQ4_XS.gguf",  size: "~1.8 GB" },
 ];
 
 fn find_model(alias: &str) -> Option<&'static ModelEntry> {
@@ -58,6 +77,101 @@ fn print_models() {
         println!("  {:<16} {:<52} {}{}", m.alias, m.file, m.size, default);
     }
     println!("\n  Or pass a local .gguf file path directly.");
+}
+
+// --- Tool Call Parsing & Execution ---
+
+#[derive(Deserialize, Debug)]
+struct ToolCall {
+    name: String,
+    arguments: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct ToolResult {
+    name: String,
+    success: bool,
+    output: String,
+}
+
+fn parse_tool_calls(response: &str) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    let mut search = response;
+    while let Some(start) = search.find("<tool_call>") {
+        let after = &search[start + 11..];
+        if let Some(end) = after.find("</tool_call>") {
+            let json_str = after[..end].trim();
+            if let Ok(call) = serde_json::from_str::<ToolCall>(json_str) {
+                calls.push(call);
+            }
+            search = &after[end + 12..];
+        } else {
+            break;
+        }
+    }
+    calls
+}
+
+fn execute_tool(call: &ToolCall) -> ToolResult {
+    match call.name.as_str() {
+        "bash" => {
+            let cmd = call.arguments.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            eprintln!("[tool] bash: {cmd}");
+            match Command::new("sh").arg("-c").arg(cmd).output() {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let mut output = String::new();
+                    if !stdout.is_empty() { output.push_str(&stdout); }
+                    if !stderr.is_empty() {
+                        if !output.is_empty() { output.push('\n'); }
+                        output.push_str("[stderr] ");
+                        output.push_str(&stderr);
+                    }
+                    // Truncate very long output
+                    if output.len() > 4000 {
+                        output.truncate(4000);
+                        output.push_str("\n[...truncated]");
+                    }
+                    ToolResult { name: "bash".into(), success: out.status.success(), output }
+                }
+                Err(e) => ToolResult { name: "bash".into(), success: false, output: format!("error: {e}") },
+            }
+        }
+        "read_file" => {
+            let path = call.arguments.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            eprintln!("[tool] read_file: {path}");
+            match fs::read_to_string(path) {
+                Ok(content) => {
+                    let mut output = content;
+                    if output.len() > 8000 {
+                        output.truncate(8000);
+                        output.push_str("\n[...truncated]");
+                    }
+                    ToolResult { name: "read_file".into(), success: true, output }
+                }
+                Err(e) => ToolResult { name: "read_file".into(), success: false, output: format!("error: {e}") },
+            }
+        }
+        "write_file" => {
+            let path = call.arguments.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = call.arguments.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            eprintln!("[tool] write_file: {path} ({} bytes)", content.len());
+            match fs::write(path, content) {
+                Ok(()) => ToolResult { name: "write_file".into(), success: true, output: format!("wrote {} bytes to {path}", content.len()) },
+                Err(e) => ToolResult { name: "write_file".into(), success: false, output: format!("error: {e}") },
+            }
+        }
+        _ => ToolResult { name: call.name.clone(), success: false, output: format!("unknown tool: {}", call.name) },
+    }
 }
 
 // --- Phase timing helper ---
@@ -85,7 +199,7 @@ impl Phase {
 
 fn find_embedded_gguf() -> Result<Option<(PathBuf, u64, u64)>> {
     let exe = std::env::current_exe().context("cannot resolve own executable path")?;
-    let mut f = std::fs::File::open(&exe).context("cannot open own executable")?;
+    let mut f = fs::File::open(&exe).context("cannot open own executable")?;
     let file_len = f.metadata()?.len();
     if file_len < FOOTER_SIZE {
         return Ok(None);
@@ -105,8 +219,7 @@ fn find_embedded_gguf() -> Result<Option<(PathBuf, u64, u64)>> {
 
 fn extract_gguf(exe_path: &PathBuf, offset: u64, length: u64) -> Result<tempfile::NamedTempFile> {
     let phase = Phase::begin("Extracting embedded GGUF weights");
-
-    let mut src = std::fs::File::open(exe_path)?;
+    let mut src = fs::File::open(exe_path)?;
     src.seek(SeekFrom::Start(offset))?;
 
     let tmp = tempfile::Builder::new()
@@ -118,7 +231,7 @@ fn extract_gguf(exe_path: &PathBuf, offset: u64, length: u64) -> Result<tempfile
     {
         let mut writer = io::BufWriter::new(tmp.as_file());
         let mut remaining = length;
-        let mut buf = vec![0u8; 8 * 1024 * 1024]; // 8MB chunks
+        let mut buf = vec![0u8; 8 * 1024 * 1024];
         let mut written: u64 = 0;
         let report_interval = length / 10;
         let mut next_report = report_interval;
@@ -152,6 +265,7 @@ fn apply_chat_template(messages: &[(String, String)], add_generation_prompt: boo
             "system" => "system",
             "user" => "user",
             "assistant" | "model" => "model",
+            "tool" => "tool",
             other => other,
         };
         out.push_str(&format!("<start_of_turn>{tag}\n{content}<end_of_turn>\n"));
@@ -166,13 +280,10 @@ fn apply_chat_template(messages: &[(String, String)], add_generation_prompt: boo
 
 fn load_model(backend: &LlamaBackend, gguf_path: &str) -> Result<LlamaModel> {
     let phase = Phase::begin(&format!("Loading model from {gguf_path}"));
-
     let model_params = pin!(LlamaModelParams::default().with_n_gpu_layers(1000));
     eprintln!("  n_gpu_layers: 1000 (offload everything)");
-
     let model = LlamaModel::load_from_file(backend, gguf_path, &model_params)
         .map_err(|e| anyhow::anyhow!("model load failed: {e}"))?;
-
     eprintln!("  vocab size: {}", model.n_vocab());
     phase.done();
     Ok(model)
@@ -197,7 +308,6 @@ fn generate_streaming(
     let prompt_tokens = tokens.len();
     eprintln!("[gen] prompt tokens: {prompt_tokens}");
 
-    // Feed prompt
     let t0 = Instant::now();
     let mut batch = LlamaBatch::new(N_CTX as usize, 1);
     let last_idx = (tokens.len() - 1) as i32;
@@ -209,7 +319,6 @@ fn generate_streaming(
     let prompt_time = t0.elapsed().as_secs_f64();
     eprintln!("[gen] prompt processed in {prompt_time:.2}s ({:.0} tok/s)", prompt_tokens as f64 / prompt_time);
 
-    // Sample
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::min_p(0.05, 1),
         LlamaSampler::temp(0.7),
@@ -244,15 +353,56 @@ fn generate_streaming(
         n_cur += 1;
     }
 
-    let _gen_time = gen_start.elapsed().as_secs_f64();
+    let gen_time = gen_start.elapsed().as_secs_f64();
     let total_time = t0.elapsed().as_secs_f64();
+    let gen_tps = if gen_time > 0.0 { gen_tokens as f64 / gen_time } else { 0.0 };
+    eprintln!("\n[gen] {gen_tokens} tokens in {gen_time:.2}s ({gen_tps:.1} tok/s)");
     Ok((response, gen_tokens, total_time))
+}
+
+// --- Agent Loop (handles tool calls) ---
+
+fn agent_turn(
+    model: &LlamaModel,
+    backend: &LlamaBackend,
+    messages: &mut Vec<(String, String)>,
+) -> Result<(usize, f64)> {
+    let mut total_toks = 0;
+    let mut total_time = 0.0;
+
+    for round in 0..MAX_TOOL_ROUNDS {
+        let (response, toks, elapsed) = generate_streaming(model, backend, messages)?;
+        total_toks += toks;
+        total_time += elapsed;
+
+        let tool_calls = parse_tool_calls(&response);
+        messages.push(("assistant".into(), response));
+
+        if tool_calls.is_empty() {
+            break;
+        }
+
+        eprintln!("\n[agent] round {}: {} tool call(s)", round + 1, tool_calls.len());
+
+        let mut results = Vec::new();
+        for call in &tool_calls {
+            let result = execute_tool(call);
+            let status = if result.success { "ok" } else { "err" };
+            println!("\n[{} -> {}]\n{}", call.name, status, result.output);
+            results.push(result);
+        }
+
+        let results_json = serde_json::to_string_pretty(&results)?;
+        messages.push(("tool".into(), results_json));
+        println!();
+    }
+
+    Ok((total_toks, total_time))
 }
 
 // --- Main ---
 
 fn main() -> Result<()> {
-    // Parse CLI args
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--list-models") {
         print_models();
@@ -266,8 +416,8 @@ fn main() -> Result<()> {
         eprintln!("  --list-models    List available model aliases");
         eprintln!("  -h, --help       Show this help");
         eprintln!();
-        eprintln!("If no GGUF path or --model is given, uses embedded weights.");
-        eprintln!("Set GEMMA_GGUF env var as fallback.");
+        eprintln!("Built-in tools: bash, read_file, write_file");
+        eprintln!("Shell escape: prefix input with ! (e.g. !ls -la)");
         return Ok(());
     }
     let model_arg = args.iter()
@@ -280,20 +430,19 @@ fn main() -> Result<()> {
    ╔═══════════════════════════════════════════╗
    ║     gemma-native v0.1.0                   ║
    ║     Self-contained Gemma 4 Agent          ║
-   ╚═══════════════════════════════════════════╝
+   ║     Tools: bash, read_file, write_file    ║
+   ╚═══════════���═══════════════════════════════╝
 "#);
 
     // Phase 1: Resolve GGUF path
     let phase = Phase::begin("Resolving model weights");
 
     let gguf_path: PathBuf;
-    let _tmp_file: Option<tempfile::NamedTempFile>; // prevent drop
+    let _tmp_file: Option<tempfile::NamedTempFile>;
 
-    // If --model=alias given, show which model it maps to
     if let Some(ref alias) = model_arg {
         if let Some(entry) = find_model(alias) {
             eprintln!("  model alias '{alias}' -> {} ({}) [{}]", entry.file, entry.repo, entry.size);
-            eprintln!("  note: --model selects for build.sh; at runtime, pass the GGUF path");
         }
     }
 
@@ -303,7 +452,6 @@ fn main() -> Result<()> {
         gguf_path = tmp.path().to_path_buf();
         _tmp_file = Some(tmp);
     } else {
-        // Fall back to positional arg, --model path, or env var
         let path = args.get(1)
             .filter(|a| !a.starts_with("--"))
             .cloned()
@@ -312,9 +460,7 @@ fn main() -> Result<()> {
             .unwrap_or_else(|| {
                 eprintln!("  no embedded weights found");
                 eprintln!("  usage: gemma-native <path-to-model.gguf>");
-                eprintln!("  or:    gemma-native --model=e4b  (for build.sh)");
                 eprintln!("  or:    GEMMA_GGUF=/path/to/model.gguf gemma-native");
-                eprintln!();
                 eprintln!("  run --list-models to see available aliases");
                 std::process::exit(1);
             });
@@ -322,7 +468,7 @@ fn main() -> Result<()> {
         if !gguf_path.exists() {
             bail!("GGUF not found: {}", gguf_path.display());
         }
-        let size = std::fs::metadata(&gguf_path)?.len();
+        let size = fs::metadata(&gguf_path)?.len();
         eprintln!("  using external GGUF: {} ({:.2} GB)", gguf_path.display(), size as f64 / 1e9);
         _tmp_file = None;
         phase.done();
@@ -342,12 +488,13 @@ fn main() -> Result<()> {
     eprintln!("[READY] Total startup: {startup_time:.2}s");
     eprintln!("============================================================");
 
-    // Phase 4: Interactive loop
+    // Phase 4: Interactive agent loop
     let mut messages: Vec<(String, String)> = vec![
         ("system".into(), SYSTEM_PROMPT.into()),
     ];
 
-    println!("\nGemma 4 Native Chat (type 'quit' to exit)\n");
+    println!("\nGemma 4 Agent (tools: bash, read_file, write_file)");
+    println!("Type 'quit' to exit, '!' prefix for direct shell\n");
 
     loop {
         print!("gemma> ");
@@ -355,28 +502,25 @@ fn main() -> Result<()> {
 
         let mut input = String::new();
         if io::stdin().read_line(&mut input)? == 0 {
-            break; // EOF
+            break;
         }
         let input = input.trim();
         if input.is_empty() { continue; }
         if input == "quit" || input == "exit" { break; }
 
-        // Shell escape
+        // Direct shell escape
         if let Some(cmd) = input.strip_prefix('!') {
             let output = Command::new("sh").arg("-c").arg(cmd).output()?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stdout.is_empty() { print!("{stdout}"); }
-            if !stderr.is_empty() { eprint!("{stderr}"); }
+            io::stdout().write_all(&output.stdout)?;
+            io::stderr().write_all(&output.stderr)?;
             continue;
         }
 
         messages.push(("user".into(), input.to_string()));
 
         println!();
-        let (response, toks, elapsed) = generate_streaming(&model, &backend, &messages)?;
+        let (toks, elapsed) = agent_turn(&model, &backend, &mut messages)?;
         let tps = if elapsed > 0.0 { toks as f64 / elapsed } else { 0.0 };
-        messages.push(("assistant".into(), response));
 
         let ctx_bytes = serde_json::to_string(&messages)?.len();
         println!("\n[{elapsed:.1}s | {toks} tok | {tps:.1} tok/s | ctx: {:.1}KB ~{}tok]",
