@@ -11,33 +11,56 @@
 #
 set -euo pipefail
 
-# ─── Model Registry ───
+# ─── Model Registry (no associative arrays — compatible with bash 3.x / macOS) ───
 
-declare -A MODEL_REPO MODEL_FILE MODEL_SIZE
-# E4B variants
-MODEL_REPO[e4b]="bartowski/google_gemma-4-E4B-it-GGUF";       MODEL_FILE[e4b]="google_gemma-4-E4B-it-Q4_K_M.gguf";   MODEL_SIZE[e4b]="~5.4 GB"
-MODEL_REPO[e4b-q8]="bartowski/google_gemma-4-E4B-it-GGUF";    MODEL_FILE[e4b-q8]="google_gemma-4-E4B-it-Q8_0.gguf";   MODEL_SIZE[e4b-q8]="~8.0 GB"
-MODEL_REPO[e4b-q4ks]="bartowski/google_gemma-4-E4B-it-GGUF";  MODEL_FILE[e4b-q4ks]="google_gemma-4-E4B-it-Q4_K_S.gguf"; MODEL_SIZE[e4b-q4ks]="~5.2 GB"
-MODEL_REPO[e4b-q3km]="bartowski/google_gemma-4-E4B-it-GGUF";  MODEL_FILE[e4b-q3km]="google_gemma-4-E4B-it-Q3_K_M.gguf"; MODEL_SIZE[e4b-q3km]="~4.9 GB"
-MODEL_REPO[e4b-iq4xs]="bartowski/google_gemma-4-E4B-it-GGUF"; MODEL_FILE[e4b-iq4xs]="google_gemma-4-E4B-it-IQ4_XS.gguf"; MODEL_SIZE[e4b-iq4xs]="~5.1 GB"
-# E2B variants
-MODEL_REPO[e2b]="bartowski/google_gemma-4-E2B-it-GGUF";       MODEL_FILE[e2b]="google_gemma-4-E2B-it-Q4_K_M.gguf";   MODEL_SIZE[e2b]="~2.0 GB"
-MODEL_REPO[e2b-q8]="bartowski/google_gemma-4-E2B-it-GGUF";    MODEL_FILE[e2b-q8]="google_gemma-4-E2B-it-Q8_0.gguf";   MODEL_SIZE[e2b-q8]="~3.0 GB"
-MODEL_REPO[e2b-q4ks]="bartowski/google_gemma-4-E2B-it-GGUF";  MODEL_FILE[e2b-q4ks]="google_gemma-4-E2B-it-Q4_K_S.gguf"; MODEL_SIZE[e2b-q4ks]="~1.9 GB"
-MODEL_REPO[e2b-q3km]="bartowski/google_gemma-4-E2B-it-GGUF";  MODEL_FILE[e2b-q3km]="google_gemma-4-E2B-it-Q3_K_M.gguf"; MODEL_SIZE[e2b-q3km]="~1.8 GB"
-MODEL_REPO[e2b-iq4xs]="bartowski/google_gemma-4-E2B-it-GGUF"; MODEL_FILE[e2b-iq4xs]="google_gemma-4-E2B-it-IQ4_XS.gguf"; MODEL_SIZE[e2b-iq4xs]="~1.8 GB"
+model_lookup() {
+    local alias="$1" field="$2"
+    case "${alias}:${field}" in
+        e4b:repo)       echo "bartowski/google_gemma-4-E4B-it-GGUF" ;;
+        e4b:file)       echo "google_gemma-4-E4B-it-Q4_K_M.gguf" ;;
+        e4b:size)       echo "~5.4 GB" ;;
+        e4b-q8:repo)    echo "bartowski/google_gemma-4-E4B-it-GGUF" ;;
+        e4b-q8:file)    echo "google_gemma-4-E4B-it-Q8_0.gguf" ;;
+        e4b-q8:size)    echo "~8.0 GB" ;;
+        e4b-q4ks:repo)  echo "bartowski/google_gemma-4-E4B-it-GGUF" ;;
+        e4b-q4ks:file)  echo "google_gemma-4-E4B-it-Q4_K_S.gguf" ;;
+        e4b-q4ks:size)  echo "~5.2 GB" ;;
+        e4b-q3km:repo)  echo "bartowski/google_gemma-4-E4B-it-GGUF" ;;
+        e4b-q3km:file)  echo "google_gemma-4-E4B-it-Q3_K_M.gguf" ;;
+        e4b-q3km:size)  echo "~4.9 GB" ;;
+        e4b-iq4xs:repo) echo "bartowski/google_gemma-4-E4B-it-GGUF" ;;
+        e4b-iq4xs:file) echo "google_gemma-4-E4B-it-IQ4_XS.gguf" ;;
+        e4b-iq4xs:size) echo "~5.1 GB" ;;
+        e2b:repo)       echo "bartowski/google_gemma-4-E2B-it-GGUF" ;;
+        e2b:file)       echo "google_gemma-4-E2B-it-Q4_K_M.gguf" ;;
+        e2b:size)       echo "~2.0 GB" ;;
+        e2b-q8:repo)    echo "bartowski/google_gemma-4-E2B-it-GGUF" ;;
+        e2b-q8:file)    echo "google_gemma-4-E2B-it-Q8_0.gguf" ;;
+        e2b-q8:size)    echo "~3.0 GB" ;;
+        e2b-q4ks:repo)  echo "bartowski/google_gemma-4-E2B-it-GGUF" ;;
+        e2b-q4ks:file)  echo "google_gemma-4-E2B-it-Q4_K_S.gguf" ;;
+        e2b-q4ks:size)  echo "~1.9 GB" ;;
+        e2b-q3km:repo)  echo "bartowski/google_gemma-4-E2B-it-GGUF" ;;
+        e2b-q3km:file)  echo "google_gemma-4-E2B-it-Q3_K_M.gguf" ;;
+        e2b-q3km:size)  echo "~1.8 GB" ;;
+        e2b-iq4xs:repo) echo "bartowski/google_gemma-4-E2B-it-GGUF" ;;
+        e2b-iq4xs:file) echo "google_gemma-4-E2B-it-IQ4_XS.gguf" ;;
+        e2b-iq4xs:size) echo "~1.8 GB" ;;
+        *) return 1 ;;
+    esac
+}
 
-MODEL_ALIASES=( e4b e4b-q8 e4b-q4ks e4b-q3km e4b-iq4xs e2b e2b-q8 e2b-q4ks e2b-q3km e2b-iq4xs )
+ALL_MODELS="e4b e4b-q8 e4b-q4ks e4b-q3km e4b-iq4xs e2b e2b-q8 e2b-q4ks e2b-q3km e2b-iq4xs"
 
 list_models() {
     echo "Available models:"
     echo ""
     printf "  %-16s %-52s %s\n" "ALIAS" "GGUF FILE" "SIZE"
-    echo "  $(printf '%0.s─' {1..80})"
-    for alias in "${MODEL_ALIASES[@]}"; do
+    echo "  --------------------------------------------------------------------------------"
+    for alias in $ALL_MODELS; do
         local default=""
-        [[ "$alias" == "e4b" ]] && default=" (default)"
-        printf "  %-16s %-52s %s%s\n" "$alias" "${MODEL_FILE[$alias]}" "${MODEL_SIZE[$alias]}" "$default"
+        [ "$alias" = "e4b" ] && default=" (default)"
+        printf "  %-16s %-52s %s%s\n" "$alias" "$(model_lookup "$alias" file)" "$(model_lookup "$alias" size)" "$default"
     done
     echo ""
     echo "  Or pass a local .gguf file path directly."
@@ -68,8 +91,7 @@ for arg in "$@"; do
             exit 0
             ;;
         *)
-            # Positional: either a local GGUF path or legacy quant name
-            if [[ -f "$arg" ]]; then
+            if [ -f "$arg" ]; then
                 GGUF_LOCAL="$arg"
             else
                 MODEL="$arg"
@@ -85,13 +107,14 @@ OUTPUT="./${BINARY_NAME}-packed"
 # ─── Helpers ───
 
 ts() { date "+%H:%M:%S"; }
-phase() { echo -e "\n$(ts) ══════════════════════════════════════════"; echo "$(ts) [PHASE] $1"; echo "$(ts) ══════════════════════════════════════════"; }
+phase() { printf "\n%s ══════════════════════════════════════════\n" "$(ts)"; echo "$(ts) [PHASE] $1"; printf "%s ══════════════════════════════════════════\n" "$(ts)"; }
 info()  { echo "$(ts) [INFO]  $*"; }
 err()   { echo "$(ts) [ERROR] $*" >&2; exit 1; }
 
 elapsed() {
     local start=$1
-    local now=$(date +%s)
+    local now
+    now=$(date +%s)
     echo $(( now - start ))
 }
 
@@ -100,36 +123,37 @@ elapsed() {
 phase "Resolve GGUF model weights"
 PHASE_START=$(date +%s)
 
-if [[ -n "$GGUF_LOCAL" ]]; then
+if [ -n "$GGUF_LOCAL" ]; then
     GGUF_PATH="$GGUF_LOCAL"
     info "using local GGUF: $GGUF_PATH"
-elif [[ -n "${MODEL_REPO[$MODEL]+x}" ]]; then
-    REPO="${MODEL_REPO[$MODEL]}"
-    GGUF_FILE="${MODEL_FILE[$MODEL]}"
+elif model_lookup "$MODEL" repo >/dev/null 2>&1; then
+    REPO="$(model_lookup "$MODEL" repo)"
+    GGUF_FILE="$(model_lookup "$MODEL" file)"
+    MODEL_SZ="$(model_lookup "$MODEL" size)"
     GGUF_PATH="${GGUF_DIR}/${GGUF_FILE}"
-    info "model: $MODEL -> $GGUF_FILE (${MODEL_SIZE[$MODEL]})"
+    info "model: $MODEL -> $GGUF_FILE ($MODEL_SZ)"
     mkdir -p "$GGUF_DIR"
 
-    if [[ -f "$GGUF_PATH" ]] && [[ "${SKIP_DOWNLOAD:-}" == "1" ]]; then
+    if [ -f "$GGUF_PATH" ] && [ "${SKIP_DOWNLOAD:-}" = "1" ]; then
         info "using cached GGUF: $GGUF_PATH"
-    elif [[ -f "$GGUF_PATH" ]]; then
+    elif [ -f "$GGUF_PATH" ]; then
         info "GGUF already downloaded: $GGUF_PATH"
     else
         info "downloading ${GGUF_FILE} from ${REPO}..."
-        info "this may take a while (${MODEL_SIZE[$MODEL]})"
+        info "this may take a while ($MODEL_SZ)"
 
-        if command -v huggingface-cli &>/dev/null; then
+        if command -v huggingface-cli >/dev/null 2>&1; then
             huggingface-cli download "$REPO" "$GGUF_FILE" \
                 --local-dir "$GGUF_DIR" \
                 --local-dir-use-symlinks False
-            if [[ ! -f "$GGUF_PATH" ]] && [[ -f "${GGUF_DIR}/${GGUF_FILE}" ]]; then
+            if [ ! -f "$GGUF_PATH" ] && [ -f "${GGUF_DIR}/${GGUF_FILE}" ]; then
                 GGUF_PATH="${GGUF_DIR}/${GGUF_FILE}"
             fi
-        elif command -v curl &>/dev/null; then
+        elif command -v curl >/dev/null 2>&1; then
             curl -L --progress-bar \
                 "https://huggingface.co/${REPO}/resolve/main/${GGUF_FILE}" \
                 -o "$GGUF_PATH"
-        elif command -v wget &>/dev/null; then
+        elif command -v wget >/dev/null 2>&1; then
             wget --show-progress \
                 "https://huggingface.co/${REPO}/resolve/main/${GGUF_FILE}" \
                 -O "$GGUF_PATH"
@@ -160,7 +184,7 @@ case "$(uname -s)" in
         CARGO_FEATURES="--features metal"
         ;;
     Linux)
-        if command -v nvcc &>/dev/null || [[ -d /usr/local/cuda ]]; then
+        if command -v nvcc >/dev/null 2>&1 || [ -d /usr/local/cuda ]; then
             info "detected Linux with CUDA — enabling CUDA GPU support"
             CARGO_FEATURES="--features cuda"
         else
@@ -173,7 +197,7 @@ info "running: cargo build --release ${CARGO_FEATURES}"
 cargo build --release ${CARGO_FEATURES} 2>&1 | tail -5
 
 RUST_BIN="./target/release/${BINARY_NAME}"
-if [[ ! -f "$RUST_BIN" ]]; then
+if [ ! -f "$RUST_BIN" ]; then
     err "build failed — binary not found at $RUST_BIN"
 fi
 
