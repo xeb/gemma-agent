@@ -271,10 +271,26 @@ fn build_prompt(messages: &[(String, String)], add_generation_prompt: bool) -> S
 // --- Model Loading & Generation ---
 
 fn load_model(backend: &LlamaBackend, gguf_path: &str) -> Result<LlamaModel> {
-    eprint!("Loading model...");
     let t0 = Instant::now();
-    let model_params = pin!(LlamaModelParams::default().with_n_gpu_layers(1000));
-    let model = LlamaModel::load_from_file(backend, gguf_path, &model_params)
+
+    if backend.supports_gpu_offload() {
+        eprint!("Loading model (GPU)...");
+        let gpu_params = pin!(LlamaModelParams::default().with_n_gpu_layers(1000));
+        match LlamaModel::load_from_file(backend, gguf_path, &gpu_params) {
+            Ok(model) => {
+                eprintln!(" done ({:.1}s)", t0.elapsed().as_secs_f64());
+                return Ok(model);
+            }
+            Err(e) => {
+                eprintln!(" failed ({e})");
+                eprintln!("Falling back to CPU...");
+            }
+        }
+    }
+
+    eprint!("Loading model (CPU)...");
+    let cpu_params = pin!(LlamaModelParams::default());
+    let model = LlamaModel::load_from_file(backend, gguf_path, &cpu_params)
         .map_err(|e| anyhow::anyhow!("model load failed: {e}"))?;
     eprintln!(" done ({:.1}s)", t0.elapsed().as_secs_f64());
     Ok(model)
@@ -509,7 +525,23 @@ fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("backend init failed: {e}"))?;
     if !verbose() { backend.void_logs(); }
 
-    let model = load_model(&backend, gguf_path.to_str().unwrap())?;
+    let model = match load_model(&backend, gguf_path.to_str().unwrap()) {
+        Ok(m) => m,
+        Err(e) => {
+            // If GPU load failed and we haven't already retried on CPU, re-exec with GPU hidden
+            if std::env::var("GEMMA_NO_GPU").is_err() {
+                eprintln!("Retrying without GPU...");
+                let exe = std::env::current_exe()?;
+                let status = Command::new(exe)
+                    .args(&args[1..])
+                    .env("CUDA_VISIBLE_DEVICES", "")
+                    .env("GEMMA_NO_GPU", "1")
+                    .status()?;
+                std::process::exit(status.code().unwrap_or(1));
+            }
+            return Err(e);
+        }
+    };
 
     let startup_time = total_start.elapsed().as_secs_f64();
     eprintln!("Ready ({startup_time:.1}s)\n");
