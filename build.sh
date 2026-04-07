@@ -150,11 +150,11 @@ elif model_lookup "$MODEL" repo >/dev/null 2>&1; then
                 GGUF_PATH="${GGUF_DIR}/${GGUF_FILE}"
             fi
         elif command -v curl >/dev/null 2>&1; then
-            curl -L --progress-bar \
+            curl -L -C - --progress-bar \
                 "https://huggingface.co/${REPO}/resolve/main/${GGUF_FILE}" \
                 -o "$GGUF_PATH"
         elif command -v wget >/dev/null 2>&1; then
-            wget --show-progress \
+            wget -c --show-progress \
                 "https://huggingface.co/${REPO}/resolve/main/${GGUF_FILE}" \
                 -O "$GGUF_PATH"
         else
