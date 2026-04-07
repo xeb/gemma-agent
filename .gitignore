@@ -1,0 +1,10 @@
+# Rust build artifacts
+gemma-native/target/
+gemma-native/gemma-native-packed
+
+# GGUF model cache
+gemma-native/gguf-cache/
+
+# Python
+__pycache__/
+*.pyc
