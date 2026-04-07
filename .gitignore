@@ -1,9 +1,7 @@
 # Rust build artifacts
-target/
-gemma-agent-packed
-
-# GGUF model cache
-gguf-cache/
+rust/target/
+rust/gemma-agent-packed
+rust/gguf-cache/
 
 # Python
 __pycache__/

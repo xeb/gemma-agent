@@ -1,39 +1,38 @@
 # gemma-agent
 
-Self-contained native binary using Gemma 4 as an offline agent with built-in tools. All inference runs locally via llama.cpp (GGUF) — no API calls, no cloud dependencies.
+Local offline agent powered by Gemma 4 with built-in tools. Two implementations: Python and Rust.
 
 ## Design goals
 
-- **Single binary** — Rust binary with GGUF weights embedded, runnable anywhere
-- **Built-in tools** — bash, read_file, write_file for agent capabilities
 - **Offline** — no network required after model download
+- **Built-in tools** — bash, read_file, write_file
 - **Minimal code** — favor fewer lines of code OVER readability
+- **Single binary option** — Rust binary with embedded GGUF weights
 
-## Building
+## Structure
 
-```bash
-# Default: E4B Q4_K_M (~5.4 GB self-contained binary)
-./build.sh
-
-# Smaller E2B variant (~2 GB)
-./build.sh --model=e2b
-
-# List all model options
-./build.sh --list-models
-```
+- `python/gemma_agent.py` — Python implementation (uv run)
+- `rust/` — Rust implementation (cargo build)
+- `SPEC.md` — Full specification
+- `test.sh` — Test suite
 
 ## Running
 
 ```bash
-# Self-contained (weights embedded)
-./gemma-agent-packed
+# Python (auto-downloads weights)
+uv run python/gemma_agent.py
+uv run python/gemma_agent.py --prompt="what time is it?"
 
-# External GGUF
+# Rust (external GGUF)
+cd rust && cargo build --release --features metal
 ./target/release/gemma-agent /path/to/model.gguf
 
-# Single prompt (useful for testing)
-./target/release/gemma-agent /path/to/model.gguf --prompt="what time is it?"
+# Rust (self-contained)
+cd rust && ./build.sh && ./gemma-agent-packed
+```
 
-# List models
-./target/release/gemma-agent --list-models
+## Testing
+
+```bash
+bash test.sh
 ```
