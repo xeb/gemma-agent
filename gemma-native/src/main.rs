@@ -4,6 +4,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::pin::pin;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -23,6 +24,14 @@ const N_CTX: u32 = 4096;
 const MAX_TOKENS: i32 = 2048;
 const MAX_TOOL_ROUNDS: usize = 10;
 
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+fn verbose() -> bool { VERBOSE.load(Ordering::Relaxed) }
+
+macro_rules! vlog {
+    ($($arg:tt)*) => { if verbose() { eprintln!($($arg)*); } }
+}
+
 const SYSTEM_PROMPT: &str = r#"You are a helpful assistant with access to tools. You can use tools by including tool calls in your response.
 
 Available tools:
@@ -41,6 +50,25 @@ Rules:
 - After tool results are returned, continue your response to the user.
 - If no tools are needed, just respond normally.
 - Always explain what you're doing before using tools."#;
+
+// Special tokens to strip from output
+const STRIP_TAGS: &[&str] = &[
+    "<end_of_turn>",
+    "<start_of_turn>model",
+    "<start_of_turn>user",
+    "<start_of_turn>system",
+    "<start_of_turn>tool",
+    "<start_of_turn>",
+];
+
+/// Strip Gemma special tokens from a response string
+fn strip_special_tokens(text: &str) -> String {
+    let mut out = text.to_string();
+    for tag in STRIP_TAGS {
+        out = out.replace(tag, "");
+    }
+    out.trim().to_string()
+}
 
 // --- Model Registry ---
 
@@ -130,7 +158,6 @@ fn execute_tool(call: &ToolCall) -> ToolResult {
                         output.push_str("[stderr] ");
                         output.push_str(&stderr);
                     }
-                    // Truncate very long output
                     if output.len() > 4000 {
                         output.truncate(4000);
                         output.push_str("\n[...truncated]");
@@ -174,27 +201,6 @@ fn execute_tool(call: &ToolCall) -> ToolResult {
     }
 }
 
-// --- Phase timing helper ---
-
-struct Phase {
-    name: String,
-    start: Instant,
-}
-
-impl Phase {
-    fn begin(name: &str) -> Self {
-        let bar = "=".repeat(60);
-        eprintln!("\n{bar}");
-        eprintln!("[PHASE] {name}");
-        eprintln!("{bar}");
-        Self { name: name.to_string(), start: Instant::now() }
-    }
-    fn done(self) {
-        let elapsed = self.start.elapsed();
-        eprintln!("[DONE]  {} ({:.2}s)\n", self.name, elapsed.as_secs_f64());
-    }
-}
-
 // --- GGUF Extraction ---
 
 fn find_embedded_gguf() -> Result<Option<(PathBuf, u64, u64)>> {
@@ -213,12 +219,13 @@ fn find_embedded_gguf() -> Result<Option<(PathBuf, u64, u64)>> {
     }
     let offset = u64::from_le_bytes(footer[0..8].try_into().unwrap());
     let length = u64::from_le_bytes(footer[8..16].try_into().unwrap());
-    eprintln!("  embedded GGUF found: offset={offset}, length={length} ({:.2} GB)", length as f64 / 1e9);
+    vlog!("  embedded GGUF: offset={offset}, length={length} ({:.2} GB)", length as f64 / 1e9);
     Ok(Some((exe, offset, length)))
 }
 
 fn extract_gguf(exe_path: &PathBuf, offset: u64, length: u64) -> Result<tempfile::NamedTempFile> {
-    let phase = Phase::begin("Extracting embedded GGUF weights");
+    eprint!("Extracting embedded weights ({:.2} GB)...", length as f64 / 1e9);
+    let t0 = Instant::now();
     let mut src = fs::File::open(exe_path)?;
     src.seek(SeekFrom::Start(offset))?;
 
@@ -232,27 +239,16 @@ fn extract_gguf(exe_path: &PathBuf, offset: u64, length: u64) -> Result<tempfile
         let mut writer = io::BufWriter::new(tmp.as_file());
         let mut remaining = length;
         let mut buf = vec![0u8; 8 * 1024 * 1024];
-        let mut written: u64 = 0;
-        let report_interval = length / 10;
-        let mut next_report = report_interval;
-
         while remaining > 0 {
             let to_read = remaining.min(buf.len() as u64) as usize;
             let n = src.read(&mut buf[..to_read])?;
             if n == 0 { bail!("unexpected EOF extracting GGUF"); }
             writer.write_all(&buf[..n])?;
             remaining -= n as u64;
-            written += n as u64;
-            if written >= next_report {
-                let pct = (written as f64 / length as f64) * 100.0;
-                eprintln!("  extracting... {pct:.0}% ({:.2} GB / {:.2} GB)", written as f64 / 1e9, length as f64 / 1e9);
-                next_report += report_interval;
-            }
         }
         writer.flush()?;
     }
-    eprintln!("  extracted {:.2} GB to {}", length as f64 / 1e9, tmp.path().display());
-    phase.done();
+    eprintln!(" done ({:.1}s)", t0.elapsed().as_secs_f64());
     Ok(tmp)
 }
 
@@ -279,13 +275,12 @@ fn apply_chat_template(messages: &[(String, String)], add_generation_prompt: boo
 // --- Model Loading & Generation ---
 
 fn load_model(backend: &LlamaBackend, gguf_path: &str) -> Result<LlamaModel> {
-    let phase = Phase::begin(&format!("Loading model from {gguf_path}"));
+    eprint!("Loading model...");
+    let t0 = Instant::now();
     let model_params = pin!(LlamaModelParams::default().with_n_gpu_layers(1000));
-    eprintln!("  n_gpu_layers: 1000 (offload everything)");
     let model = LlamaModel::load_from_file(backend, gguf_path, &model_params)
         .map_err(|e| anyhow::anyhow!("model load failed: {e}"))?;
-    eprintln!("  vocab size: {}", model.n_vocab());
-    phase.done();
+    eprintln!(" done ({:.1}s)", t0.elapsed().as_secs_f64());
     Ok(model)
 }
 
@@ -306,7 +301,7 @@ fn generate_streaming(
         .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
 
     let prompt_tokens = tokens.len();
-    eprintln!("[gen] prompt tokens: {prompt_tokens}");
+    vlog!("[gen] prompt tokens: {prompt_tokens}");
 
     let t0 = Instant::now();
     let mut batch = LlamaBatch::new(N_CTX as usize, 1);
@@ -317,7 +312,7 @@ fn generate_streaming(
     ctx.decode(&mut batch)
         .map_err(|e| anyhow::anyhow!("prompt decode failed: {e}"))?;
     let prompt_time = t0.elapsed().as_secs_f64();
-    eprintln!("[gen] prompt processed in {prompt_time:.2}s ({:.0} tok/s)", prompt_tokens as f64 / prompt_time);
+    vlog!("[gen] prompt: {prompt_time:.2}s ({:.0} tok/s)", prompt_tokens as f64 / prompt_time);
 
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::min_p(0.05, 1),
@@ -331,6 +326,9 @@ fn generate_streaming(
     let mut gen_tokens: usize = 0;
     let gen_start = Instant::now();
 
+    // Buffer for detecting and suppressing special tokens during streaming
+    let mut print_buf = String::new();
+
     while n_cur <= MAX_TOKENS {
         let token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(token);
@@ -341,10 +339,41 @@ fn generate_streaming(
 
         let piece = model.token_to_piece(token, &mut decoder, true, None)
             .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))?;
-        print!("{piece}");
-        io::stdout().flush()?;
         response.push_str(&piece);
         gen_tokens += 1;
+
+        // Buffer output to detect and suppress special tags during streaming
+        print_buf.push_str(&piece);
+
+        // Check if buffer contains a complete special tag to suppress
+        let mut suppressed = false;
+        for tag in STRIP_TAGS {
+            if print_buf.contains(tag) {
+                // Flush everything before the tag, skip the tag itself
+                if let Some(pos) = print_buf.find(tag) {
+                    let before = &print_buf[..pos];
+                    if !before.is_empty() {
+                        print!("{before}");
+                        io::stdout().flush()?;
+                    }
+                    print_buf = print_buf[pos + tag.len()..].to_string();
+                    suppressed = true;
+                    break;
+                }
+            }
+        }
+
+        // If no tag is being built up, flush the buffer
+        if !suppressed {
+            // Check if buffer could be the start of a special tag
+            let might_be_tag = print_buf.starts_with('<') &&
+                STRIP_TAGS.iter().any(|t| t.starts_with(print_buf.as_str()));
+            if !might_be_tag {
+                print!("{print_buf}");
+                io::stdout().flush()?;
+                print_buf.clear();
+            }
+        }
 
         batch.clear();
         batch.add(token, n_cur, &[0], true)?;
@@ -353,11 +382,22 @@ fn generate_streaming(
         n_cur += 1;
     }
 
+    // Flush remaining buffer
+    if !print_buf.is_empty() {
+        let cleaned = strip_special_tokens(&print_buf);
+        if !cleaned.is_empty() {
+            print!("{cleaned}");
+            io::stdout().flush()?;
+        }
+    }
+
     let gen_time = gen_start.elapsed().as_secs_f64();
     let total_time = t0.elapsed().as_secs_f64();
-    let gen_tps = if gen_time > 0.0 { gen_tokens as f64 / gen_time } else { 0.0 };
-    eprintln!("\n[gen] {gen_tokens} tokens in {gen_time:.2}s ({gen_tps:.1} tok/s)");
-    Ok((response, gen_tokens, total_time))
+    vlog!("[gen] {gen_tokens} tok in {gen_time:.2}s ({:.1} tok/s)", gen_tokens as f64 / gen_time);
+
+    // Clean special tokens from the stored response too
+    let clean_response = strip_special_tokens(&response);
+    Ok((clean_response, gen_tokens, total_time))
 }
 
 // --- Agent Loop (handles tool calls) ---
@@ -382,7 +422,7 @@ fn agent_turn(
             break;
         }
 
-        eprintln!("\n[agent] round {}: {} tool call(s)", round + 1, tool_calls.len());
+        vlog!("[agent] round {}: {} tool call(s)", round + 1, tool_calls.len());
 
         let mut results = Vec::new();
         for call in &tool_calls {
@@ -409,91 +449,83 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        eprintln!("Usage: gemma-native [OPTIONS] [GGUF_PATH]");
-        eprintln!();
-        eprintln!("Options:");
-        eprintln!("  --model=ALIAS    Model alias (see --list-models)");
-        eprintln!("  --list-models    List available model aliases");
-        eprintln!("  -h, --help       Show this help");
-        eprintln!();
-        eprintln!("Built-in tools: bash, read_file, write_file");
-        eprintln!("Shell escape: prefix input with ! (e.g. !ls -la)");
+        println!("Usage: gemma-native [OPTIONS] [GGUF_PATH]");
+        println!();
+        println!("Options:");
+        println!("  --model=ALIAS    Model alias (see --list-models)");
+        println!("  --list-models    List available model aliases");
+        println!("  --verbose        Show llama.cpp internals and debug info");
+        println!("  -h, --help       Show this help");
+        println!();
+        println!("Built-in tools: bash, read_file, write_file");
+        println!("Shell escape: prefix input with ! (e.g. !ls -la)");
         return Ok(());
     }
+
+    if args.iter().any(|a| a == "--verbose" || a == "-v") {
+        VERBOSE.store(true, Ordering::Relaxed);
+    }
+
     let model_arg = args.iter()
         .find(|a| a.starts_with("--model="))
         .map(|a| a.strip_prefix("--model=").unwrap().to_string())
         .or_else(|| args.iter().position(|a| a == "--model").and_then(|i| args.get(i + 1).cloned()));
 
     let total_start = Instant::now();
-    eprintln!(r#"
-   ╔═══════════════════════════════════════════╗
-   ║     gemma-native v0.1.0                   ║
-   ║     Self-contained Gemma 4 Agent          ║
-   ║     Tools: bash, read_file, write_file    ║
-   ╚═══════════���═══════════════════════════════╝
-"#);
 
-    // Phase 1: Resolve GGUF path
-    let phase = Phase::begin("Resolving model weights");
-
+    // Resolve GGUF path
     let gguf_path: PathBuf;
     let _tmp_file: Option<tempfile::NamedTempFile>;
 
     if let Some(ref alias) = model_arg {
         if let Some(entry) = find_model(alias) {
-            eprintln!("  model alias '{alias}' -> {} ({}) [{}]", entry.file, entry.repo, entry.size);
+            vlog!("model alias '{alias}' -> {} [{}]", entry.file, entry.size);
         }
     }
 
     if let Some((exe_path, offset, length)) = find_embedded_gguf()? {
-        phase.done();
         let tmp = extract_gguf(&exe_path, offset, length)?;
         gguf_path = tmp.path().to_path_buf();
         _tmp_file = Some(tmp);
     } else {
-        let path = args.get(1)
-            .filter(|a| !a.starts_with("--"))
+        let path = args.iter()
+            .find(|a| !a.starts_with("--") && **a != args[0])
             .cloned()
             .or(model_arg.clone())
             .or_else(|| std::env::var("GEMMA_GGUF").ok())
             .unwrap_or_else(|| {
-                eprintln!("  no embedded weights found");
-                eprintln!("  usage: gemma-native <path-to-model.gguf>");
-                eprintln!("  or:    GEMMA_GGUF=/path/to/model.gguf gemma-native");
-                eprintln!("  run --list-models to see available aliases");
+                eprintln!("No embedded weights found.");
+                eprintln!("Usage: gemma-native <path-to-model.gguf>");
+                eprintln!("       GEMMA_GGUF=/path/to/model.gguf gemma-native");
+                eprintln!("       gemma-native --list-models");
                 std::process::exit(1);
             });
         gguf_path = PathBuf::from(&path);
         if !gguf_path.exists() {
             bail!("GGUF not found: {}", gguf_path.display());
         }
-        let size = fs::metadata(&gguf_path)?.len();
-        eprintln!("  using external GGUF: {} ({:.2} GB)", gguf_path.display(), size as f64 / 1e9);
         _tmp_file = None;
-        phase.done();
     }
 
-    // Phase 2: Initialize backend
-    let phase = Phase::begin("Initializing llama.cpp backend");
-    let backend = LlamaBackend::init()
+    // Initialize backend and suppress llama.cpp logs
+    let mut backend = LlamaBackend::init()
         .map_err(|e| anyhow::anyhow!("backend init failed: {e}"))?;
-    phase.done();
+    if !verbose() {
+        backend.void_logs();
+    }
 
-    // Phase 3: Load model
+    // Load model
     let model = load_model(&backend, gguf_path.to_str().unwrap())?;
 
     let startup_time = total_start.elapsed().as_secs_f64();
-    eprintln!("============================================================");
-    eprintln!("[READY] Total startup: {startup_time:.2}s");
-    eprintln!("============================================================");
+    eprintln!("Ready ({startup_time:.1}s)\n");
 
-    // Phase 4: Interactive agent loop
+    // Interactive agent loop
     let mut messages: Vec<(String, String)> = vec![
         ("system".into(), SYSTEM_PROMPT.into()),
     ];
 
-    println!("\nGemma 4 Agent (tools: bash, read_file, write_file)");
+    println!("Gemma 4 Agent (tools: bash, read_file, write_file)");
     println!("Type 'quit' to exit, '!' prefix for direct shell\n");
 
     loop {
@@ -508,7 +540,6 @@ fn main() -> Result<()> {
         if input.is_empty() { continue; }
         if input == "quit" || input == "exit" { break; }
 
-        // Direct shell escape
         if let Some(cmd) = input.strip_prefix('!') {
             let output = Command::new("sh").arg("-c").arg(cmd).output()?;
             io::stdout().write_all(&output.stdout)?;
@@ -523,11 +554,9 @@ fn main() -> Result<()> {
         let tps = if elapsed > 0.0 { toks as f64 / elapsed } else { 0.0 };
 
         let ctx_bytes = serde_json::to_string(&messages)?.len();
-        println!("\n[{elapsed:.1}s | {toks} tok | {tps:.1} tok/s | ctx: {:.1}KB ~{}tok]",
+        println!("\n[{elapsed:.1}s | {toks} tok | {tps:.1} tok/s | ctx: {:.1}KB ~{}tok]\n",
             ctx_bytes as f64 / 1024.0, ctx_bytes / 4);
-        println!();
     }
 
-    eprintln!("\n[total session: {:.1}s]", total_start.elapsed().as_secs_f64());
     Ok(())
 }
