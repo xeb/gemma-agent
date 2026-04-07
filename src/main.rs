@@ -227,7 +227,7 @@ fn extract_gguf(exe_path: &PathBuf, offset: u64, length: u64) -> Result<tempfile
     let t0 = Instant::now();
     let mut src = fs::File::open(exe_path)?;
     src.seek(SeekFrom::Start(offset))?;
-    let tmp = tempfile::Builder::new().prefix("gemma-native-").suffix(".gguf").tempfile()
+    let tmp = tempfile::Builder::new().prefix("gemma-agent-").suffix(".gguf").tempfile()
         .context("cannot create temp file for GGUF")?;
     {
         let mut writer = io::BufWriter::new(tmp.as_file());
@@ -442,7 +442,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("Usage: gemma-native [OPTIONS] [GGUF_PATH]");
+        println!("Usage: gemma-agent [OPTIONS] [GGUF_PATH]");
         println!();
         println!("Options:");
         println!("  --model=ALIAS      Model alias (see --list-models)");
@@ -486,13 +486,20 @@ fn main() -> Result<()> {
             .or_else(|| std::env::var("GEMMA_GGUF").ok())
             .unwrap_or_else(|| {
                 eprintln!("No embedded weights found.");
-                eprintln!("Usage: gemma-native <path-to-model.gguf>");
-                eprintln!("       gemma-native --list-models");
+                eprintln!("Run ./build.sh to create a self-contained binary,");
+                eprintln!("or pass a GGUF file path:");
+                eprintln!("  gemma-agent <path-to-model.gguf>");
                 std::process::exit(1);
             });
+        // Check if user passed a model alias instead of a file path
+        if find_model(&path).is_some() {
+            bail!("'{}' is a model alias, not a file path.\n\
+                   Use: ./build.sh --model={}\n\
+                   Or download the GGUF and pass the file path directly.", path, path);
+        }
         gguf_path = PathBuf::from(&path);
         if !gguf_path.exists() {
-            bail!("GGUF not found: {}", gguf_path.display());
+            bail!("GGUF file not found: {}", gguf_path.display());
         }
         _tmp_file = None;
     }
