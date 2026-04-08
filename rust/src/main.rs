@@ -68,12 +68,19 @@ fn strip_special_tokens(text: &str) -> String {
     for tag in STRIP_TAGS {
         out = out.replace(tag, "");
     }
-    // Also strip tool_call blocks from display (they're handled separately)
+    // Strip tool_call blocks from display
     while let Some(start) = out.find("<|tool_call>") {
         if let Some(end) = out[start..].find("<tool_call|>") {
             out.replace_range(start..start + end + 12, "");
         } else {
             break;
+        }
+    }
+    // Strip any trailing partial tags like "<end_of_turn" or "<start_of_"
+    if let Some(pos) = out.rfind('<') {
+        let tail = &out[pos..];
+        if !tail.contains('>') {
+            out.truncate(pos);
         }
     }
     out.trim().to_string()
@@ -366,8 +373,11 @@ fn generate(
             break;
         }
 
-        // Stream cleaned output (suppress tool call syntax while building)
-        if !response.contains("<|tool_call>") {
+        // Stream output, suppressing special tags
+        if !response.contains("<tool_call>") && !piece.contains('<') && !response.ends_with('<')
+            && !response.ends_with("<e") && !response.ends_with("<en") && !response.ends_with("<end")
+            && !response.ends_with("<s") && !response.ends_with("<st")
+        {
             print!("{piece}");
             io::stdout().flush()?;
         }
